@@ -1,11 +1,9 @@
-name: UUYun Checkin (Auto-Warp)
+name: UUYun Checkin 
 
 on:
   schedule:
-    # 每天 UTC 17:00 (北京时间 01:00) 运行
-    # 避开高峰期，成功率更高
     - cron: '0 17 * * *'
-  workflow_dispatch: # 允许手动点击按钮触发
+  workflow_dispatch:
 
 jobs:
   checkin:
@@ -24,39 +22,19 @@ jobs:
       run: |
         pip install requests
 
-    # --- Cloudflare WARP 安装与配置 (修复版) ---
     - name: Install and Configure Cloudflare WARP
       run: |
-        # 1. 添加 GPG Key
         curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-        
-        # 2. 添加软件源
         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
         
-        # 3. 安装 WARP
         sudo apt-get update
         sudo apt-get install -y cloudflare-warp
         
-        # 4. 注册客户端 (新版命令: registration new)
         sudo warp-cli --accept-tos registration new
-        
-        # 5. 设置模式 (新版命令: mode)
-        # 使用 DoH 模式，在 GitHub Actions 环境下通常比默认模式更稳定
         sudo warp-cli --accept-tos mode warp+doh
-        
-        # 6. 初次连接
-        sudo warp-cli --accept-tos connect
-        
-        # 等待连接建立 (重要)
-        sleep 5
-        
-        # 检查是否成功 (仅输出 HTTP 状态，不输出 IP，保护隐私)
-        echo "Testing Network Connectivity..."
-        curl -s -o /dev/null -w "%{http_code}" https://www.google.com || echo "Network check failed"
 
     - name: Run Checkin Script
       env:
-        # 这里的 Secret 必须在仓库设置中添加
         UUYUN_ACCOUNTS: ${{ secrets.UUYUN_ACCOUNTS }}
         PYTHONUNBUFFERED: 1
       run: |
