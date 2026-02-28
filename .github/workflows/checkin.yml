@@ -1,0 +1,52 @@
+name: UUYun Checkin (Warp+Login)
+
+on:
+  schedule:
+    # 每天北京时间 9:00 (UTC 1:00) 运行
+    - cron: '0 1 * * *'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install Dependencies
+      run: |
+        pip install requests
+
+    # --- Cloudflare WARP 配置 ---
+    - name: Install and Configure Cloudflare WARP
+      run: |
+        curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+        
+        sudo apt-get update
+        sudo apt-get install -y cloudflare-warp
+        
+        # 注册并配置 WARP (使用 DoH 模式更稳定)
+        sudo warp-cli --accept-tos register
+        sudo warp-cli --accept-tos set-mode warp+doh
+        
+        # 初始连接
+        sudo warp-cli --accept-tos connect
+        sleep 5
+        
+        # 验证 IP 变更情况 (仅调试用，不会显示敏感信息)
+        echo "Checking Network Status..."
+        curl -sI https://www.google.com | head -n 1
+
+    - name: Run Checkin Script
+      env:
+        # 这里引用的是账号密码 Secrets
+        UUYUN_ACCOUNTS: ${{ secrets.UUYUN_ACCOUNTS }}
+      run: |
+        python uuyun_checkin.py
