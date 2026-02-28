@@ -25,10 +25,9 @@ def log(content):
 
 def manage_warp(action):
     """
-    WARP IP 切换逻辑 (修复版)
+    WARP IP 切换逻辑
     """
     try:
-        # 统一添加 --accept-tos 防止新版客户端报错
         cmd_prefix = ["sudo", "warp-cli", "--accept-tos"]
         
         if action == 'restart':
@@ -39,47 +38,72 @@ def manage_warp(action):
             
         elif action == 'connect':
             log("[Network] 正在初始化 WARP 连接...")
-            # 先尝试断开，确保状态干净，防止 'Already connected' 报错
             subprocess.run(cmd_prefix + ["disconnect"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             time.sleep(1)
             subprocess.run(cmd_prefix + ["connect"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
-        time.sleep(5) # 等待连接建立
+        time.sleep(5)
         
-    except subprocess.CalledProcessError as e:
-        log(f"[System] WARP 命令执行失败 (代码 {e.returncode})，但这可能不影响后续运行。")
     except Exception as e:
         log(f"[System] WARP 操作异常: {e}")
 
+def convert_to_mb(value_str):
+    """辅助函数：将流量字符串转换为 MB 以便比较大小"""
+    value_str = value_str.upper()
+    try:
+        if 'TB' in value_str:
+            return float(re.findall(r"[\d\.]+", value_str)[0]) * 1024 * 1024
+        elif 'GB' in value_str:
+            return float(re.findall(r"[\d\.]+", value_str)[0]) * 1024
+        elif 'MB' in value_str:
+            return float(re.findall(r"[\d\.]+", value_str)[0])
+        elif 'KB' in value_str:
+            return float(re.findall(r"[\d\.]+", value_str)[0]) / 1024
+    except:
+        return 0
+    return 0
+
 def get_remaining_traffic(session):
     """
-    从用户中心页面提取剩余流量 (增强版)
+    从用户中心页面提取剩余流量 (终极增强版)
     """
     try:
         res = session.get(USER_INFO_URL, timeout=15)
+        # 强制设置编码，防止中文匹配乱码
+        res.encoding = 'utf-8' 
+        
         if res.status_code == 200:
             html = res.text
-            # 策略1: 针对截图中的卡片布局，通常会有 "剩余流量" 字样
-            # 增加对 TB/KB 的支持，使用 re.DOTALL (re.S) 跨行匹配
-            # 匹配逻辑: "剩余" -> 任意字符 -> 数字 -> 单位(TB/GB/MB/KB)
-            match = re.search(r'剩余.*?>\s*(\d+(\.\d+)?\s*[TGMK]B)', html, re.S)
+            
+            # --- 方案 1: 精准匹配 "剩余" 字样 ---
+            # 扩大匹配范围，忽略换行符
+            match = re.search(r'剩余.*?>\s*(\d+(?:\.\d+)?\s*[TGMK]B)', html, re.S)
             if match:
                 return match.group(1)
-            
-            # 策略2: 如果策略1失败，匹配纯文本格式 (例如: 剩余流量: 976.6 TB)
-            match_text = re.search(r'剩余.*?(\d+(\.\d+)?\s*[TGMK]B)', html, re.S)
-            if match_text:
-                return match_text.group(1)
 
-            # 策略3: 盲抓大字号数字 (备用)
-            # 截图中的 976.6 TB 非常显眼，通常在某个标签内
-            match_broad = re.search(r'>\s*(\d+(\.\d+)?\s*(TB|GB|MB))\s*<', html)
-            if match_broad:
-                return match_broad.group(1)
-                
+            # --- 方案 2: 暴力扫描所有流量格式，取最大值 ---
+            # 既然你的剩余流量高达 976.6 TB，它一定是页面上最大的那个数字
+            all_traffic = re.findall(r'(\d+(?:\.\d+)?\s*[TGMK]B)', html)
+            if all_traffic:
+                # 排除掉明显是年份的数字 (如 2026 MB 这种误判，虽不常见但以防万一)
+                valid_traffic = [t for t in all_traffic if "202" not in t] 
+                if valid_traffic:
+                    # 找出数值最大的那个
+                    max_traffic = max(valid_traffic, key=convert_to_mb)
+                    return f"{max_traffic} (自动识别最大值)"
+            
+            # --- 调试信息: 如果还是失败，打印页面关键部分 ---
+            if "剩余" in html:
+                idx = html.find("剩余")
+                # 打印 "剩余" 后面 200 个字符，看看网页结构到底长啥样
+                snippet = html[idx:idx+200].replace('\n', ' ').replace('\r', '')
+                return f"解析失败. 页面片段: {snippet}..."
+            else:
+                return "解析失败. 页面中未找到 '剩余' 二字 (可能是动态渲染或登录失效)"
+
     except Exception as e:
         return f"提取出错: {str(e)}"
-    return "解析失败 (未匹配到格式)"
+    return "解析失败 (未知原因)"
 
 def run_task(account_idx, email, password):
     session = requests.Session()
@@ -94,9 +118,7 @@ def run_task(account_idx, email, password):
     }
     
     try:
-        # log(f"--- 正在处理: 账户 {account_idx} ---") # 减少日志冗余
         resp = session.post(LOGIN_URL, data=login_data, timeout=20)
-        
         try:
             login_json = resp.json()
         except:
@@ -131,7 +153,6 @@ def run_task(account_idx, email, password):
         # 3. 获取剩余流量
         remain = get_remaining_traffic(session)
         
-        # 4. 输出报告
         log(f"""
 === [账户 {account_idx}] 结果 ===
 状态: {status_log}
@@ -160,8 +181,6 @@ def main():
     log(f"检测到 {len(accounts)} 个账户，开始执行任务...\n")
 
     for idx, (email, pwd) in enumerate(accounts):
-        # 第一个账户只连不切，后续账户切换IP
-        # 使用 'connect' 会触发先 disconnect 再 connect，解决冲突问题
         if idx == 0:
             manage_warp('connect')
         else:
